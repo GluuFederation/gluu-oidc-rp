@@ -19,7 +19,7 @@ This extension is for convenient testing of authentication flows on browser.
 4. Click on `Load unpacked` button to load the extension
 5. the extension is now ready to use
 
-## Install
+## Build & Package
 
 Follow the steps provided [**here**](https://github.com/dutiyesh/chrome-extension-cli).
 
