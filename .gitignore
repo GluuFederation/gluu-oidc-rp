@@ -12,4 +12,6 @@
 npm-debug.log*
 
 # packed files
-#/release
+/release
+
+package-lock.json
