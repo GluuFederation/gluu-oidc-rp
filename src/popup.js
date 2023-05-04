@@ -271,10 +271,18 @@ const qs = require('qs');
   }
 
   document.addEventListener('DOMContentLoaded', function () {
-    document.getElementById('sbmtButton').addEventListener('click', submitForm);
-    document.getElementById('resetButton').addEventListener('click', resetClient);
-    document.getElementById('trigCodeFlowButton').addEventListener('click', trigCodeFlowButton);
-    document.getElementById('logoutButton').addEventListener('click', logout);
+    if (document.getElementById('sbmtButton') != null) {
+      document.getElementById('sbmtButton').addEventListener('click', submitForm);
+    }
+    if (document.getElementById('resetButton') != null) {
+      document.getElementById('resetButton').addEventListener('click', resetClient);
+    }
+    if (document.getElementById('trigCodeFlowButton') != null) {
+      document.getElementById('trigCodeFlowButton').addEventListener('click', trigCodeFlowButton);
+    }
+    if (document.getElementById('logoutButton') != null) {
+      document.getElementById('logoutButton').addEventListener('click', logout);
+    }
   });
 
   function isEmpty(value) {
@@ -284,14 +292,18 @@ const qs = require('qs');
   function showDiv(idArray) {
     //alert(idArray)
     idArray.forEach(ele => {
-      document.getElementById(ele).style.display = "block";
+      if (document.getElementById(ele) != null) {
+        document.getElementById(ele).style.display = "block";
+      }
     });
   }
 
   function hideDiv(idArray) {
     //alert(idArray)
     idArray.forEach(ele => {
-      document.getElementById(ele).style.display = "none";
+      if (document.getElementById(ele) != null) {
+        document.getElementById(ele).style.display = "none";
+      }
     });
   }
 
