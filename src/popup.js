@@ -6,7 +6,6 @@ const qs = require('qs');
 (function () {
 
   onLoad();
-
   /**
    * The function checks if login details are stored in local storage and triggers a code flow button if
    * they are empty, then checks the database.
@@ -29,7 +28,7 @@ const qs = require('qs');
   async function checkDB() {
     chrome.storage.local.get(["oidcClient"]).then((result) => {
       if (result.oidcClient != undefined) {
-        console.log("Value currently is " + JSON.stringify(result.oidcClient));
+        console.log("OIDC Client present in DB: " + JSON.stringify(result.oidcClient));
 
         document.getElementById('opHost').value = result.oidcClient.op_host
         document.getElementById('clientId').value = result.oidcClient.client_id
@@ -59,8 +58,7 @@ const qs = require('qs');
 
   async function trigCodeFlowButton() {
     showDiv(['loadingDiv'])
-    const redirectUrl = /*chrome.runtime.getURL('redirect.html')*/chrome.identity.getRedirectURL()
-    console.log('redirectUrl', redirectUrl)
+    const redirectUrl = chrome.identity.getRedirectURL()/*chrome.runtime.getURL('redirect.html')*/
     await chrome.storage.local.get(["oidcClient"]).then(async (result) => {
       if (result.oidcClient != undefined) {
         let authzUrl = result.oidcClient.authorization_endpoint +
@@ -76,20 +74,20 @@ const qs = require('qs');
 
         if (additionalParams != undefined && additionalParams.trim() != '') {
           let additionalParamJSON = JSON.parse(additionalParams)
+          console.log('Processing additional parameters');
           Object.keys(additionalParamJSON).forEach(key => {
 
             console.log(key + "~~~" + additionalParamJSON[key]);
             authzUrl += `&${key}=${additionalParamJSON[key]}`
           });
         }
-
-
+        console.log('Obtained autorization URL: '+authzUrl)
         const resultUrl = await new Promise((resolve, reject) => {
           chrome.identity.launchWebAuthFlow({
             url: authzUrl,
             interactive: true
           }, callbackUrl => {
-            console.log('callbackUrl', callbackUrl)
+            console.log('Callback Url: ', callbackUrl)
             resolve(callbackUrl);
           });
         });
@@ -107,8 +105,6 @@ const qs = require('qs');
             });
           });
 
-          console.log(JSON.parse(JSON.parse(opConfig).opConfiguration).token_endpoint)
-
           const tokenReqData = qs.stringify({
             redirect_uri: redirectUrl,
             grant_type: 'authorization_code',
@@ -121,7 +117,7 @@ const qs = require('qs');
             method: 'POST',
             headers: { 'content-type': 'application/x-www-form-urlencoded', 'Authorization': 'Basic ' + btoa(`${result.oidcClient.client_id}:${result.oidcClient.client_secret}`) },
             data: tokenReqData,
-            url: JSON.parse(JSON.parse(opConfig).opConfiguration).token_endpoint,
+            url: JSON.parse(opConfig).opConfiguration.token_endpoint,
           };
 
           const tokenResponse = await axios(tokenReqOptions);
@@ -139,7 +135,7 @@ const qs = require('qs');
               method: 'POST',
               headers: { 'content-type': 'application/x-www-form-urlencoded', 'Authorization': `Bearer ${tokenResponse.data.access_token}` },
               data: userInfoData,
-              url: JSON.parse(JSON.parse(opConfig).opConfiguration).userinfo_endpoint,
+              url: JSON.parse(opConfig).opConfiguration.userinfo_endpoint,
             };
 
             const userInfoResponse = await axios(userInfoOptions);
@@ -174,6 +170,8 @@ const qs = require('qs');
         });
       });
 
+      const openidConfiguration = await new Promise((resolve, reject) => { chrome.storage.local.get(["opConfiguration"], (result) => { resolve(JSON.stringify(result)); })});
+
       chrome.storage.local.remove(["loginDetails"], function () {
         var error = chrome.runtime.lastError;
         if (error) {
@@ -182,7 +180,7 @@ const qs = require('qs');
           document.getElementById('userDetailsSpan').innerHTML = ''
           showDiv(['oidcClientDetails']);
           hideDiv(['userDetailsDiv', 'registerForm']);
-          window.location.href = `https://admin-ui-test.gluu.org/jans-auth/restv1/end_session?state=${uuidv4()}&post_logout_redirect_uri=${chrome.runtime.getURL('options.html')}&id_token_hint=${JSON.parse(loginDetails).loginDetails.id_token}`
+          window.location.href = `${JSON.parse(openidConfiguration).opConfiguration.end_session_endpoint}?state=${uuidv4()}&post_logout_redirect_uri=${chrome.runtime.getURL('options.html')}&id_token_hint=${JSON.parse(loginDetails).loginDetails.id_token}`
           checkDB();
         }
       });
@@ -214,7 +212,6 @@ const qs = require('qs');
       registerObj.token_endpoint_auth_method = 'client_secret_basic'
       try {
         const response = await register(issuer, registerObj)
-
         if (response.result == 'success') {
           checkDB();
         } else {
@@ -230,13 +227,83 @@ const qs = require('qs');
   }
 
   async function register(issuer, registerObj) {
-    return await new Promise(resolve => {
-      chrome.runtime.sendMessage({
-        type: "register_click_event",
-        issuer: issuer,
-        registerObj: registerObj
-      }, resolve);
-    });
+    try {
+      const openapiConfig = await getOpenidConfiguration(issuer);
+
+      if (openapiConfig != undefined) {
+        await chrome.storage.local.set({ opConfiguration: openapiConfig.data }).then(() => {
+          console.log("openapiConfig is set to " + openapiConfig);
+        });
+
+        const registrationUrl = openapiConfig.data.registration_endpoint;
+
+        const registrationResp = await registerOIDCClient(registrationUrl, registerObj);
+
+        if (registrationResp != undefined) {
+
+          await chrome.storage.local.set({
+            oidcClient: {
+              'op_host': issuer,
+              'client_id': registrationResp.data.client_id,
+              'client_secret': registrationResp.data.client_secret,
+              'scope': registerObj.scope,
+              'redirect_uri': registerObj.redirect_uris,
+              'acr_values': registerObj.default_acr_values,
+              'authorization_endpoint': openapiConfig.data.authorization_endpoint,
+              'response_type': registerObj.response_types,
+              'additionalParams': registerObj.additionalParam,
+              'post_logout_redirect_uris': registerObj.post_logout_redirect_uri,
+
+            }
+          })
+          console.log("oidcClient is set for client_id: " + registrationResp.data.client_id);
+          console.log('OIDC client registered successfully!')
+          return await { result: "success", message: "Regstration successful!" };
+
+        } else {
+          return await { result: "error", message: "Error in registration!" };
+        }
+      } else {
+        return await { result: "error", message: "Error in registration!" };
+      }
+    } catch (err) {
+      console.error(err)
+      return { result: "error", message: "Error in registration!" };
+    }
+    //chrome.windows.create({url: "https://admin-ui-test.gluu.org/jans-auth/authorize.htm?scope=openid+profile+user_name+email&acr_values=basic&response_type=code&redirect_uri=https%3A%2F%2Fadmin-ui-test.gluu.org%2Fadmin&state=07adc860-5ce8-4516-a15f-65f8c5b9a882&nonce=bf92bede-c1c4-43da-9cb0-83b14ecdb467&client_id=2001.bfd15f73-96cf-4ac7-a066-32c78d516c16",focused: true, incognito: true});
+  }
+
+  async function registerOIDCClient(registration_endpoint, registerObj) {
+    try {
+      const registerReqOptions = {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        data: JSON.stringify(registerObj),
+        url: registration_endpoint,
+      };
+
+      const response = await axios(registerReqOptions);
+      return await response;
+    } catch (err) {
+      console.error(err)
+    }
+
+  }
+
+  async function getOpenidConfiguration(issuer) {
+    try {
+
+      const endpoint = issuer + '/.well-known/openid-configuration';
+      const oidcConfigOptions = {
+        method: 'GET',
+        url: endpoint,
+      };
+      const response = await axios(oidcConfigOptions);
+      return await response;
+    } catch (err) {
+      console.error(err)
+    }
+
   }
 
   function validateForm() {
@@ -290,7 +357,6 @@ const qs = require('qs');
   }
 
   function showDiv(idArray) {
-    //alert(idArray)
     idArray.forEach(ele => {
       if (document.getElementById(ele) != null) {
         document.getElementById(ele).style.display = "block";
@@ -299,7 +365,6 @@ const qs = require('qs');
   }
 
   function hideDiv(idArray) {
-    //alert(idArray)
     idArray.forEach(ele => {
       if (document.getElementById(ele) != null) {
         document.getElementById(ele).style.display = "none";
